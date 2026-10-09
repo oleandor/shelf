@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, Navigate, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
+import { ApiError } from "@/api/client";
 import {
   resolveAttachments,
   type AttachmentKey,
@@ -9,11 +10,18 @@ import {
 
 const SHA256 = /^[0-9a-f]{64}$/i;
 
+/** The server's length caps on the edition fields, mirrored so an
+ * over-long one is treated as missing instead of earning a 422. */
+const MAX_BODY = 120;
+const MAX_DESIGNATION = 200;
+const MAX_LABEL = 120;
+
 /**
  * The keys a link carries, in the order they're tried: the file's hash
  * first, since it names exactly these bytes, then the standard edition,
  * which still finds the document when the library holds a different
- * download of it. A malformed hash is ignored rather than sent.
+ * download of it. A malformed hash, or an edition field longer than the
+ * server accepts, is ignored rather than sent.
  */
 export function keysFromSearch(params: URLSearchParams): AttachmentKey[] {
   const keys: AttachmentKey[] = [];
@@ -22,7 +30,16 @@ export function keysFromSearch(params: URLSearchParams): AttachmentKey[] {
   const body = params.get("body")?.trim() ?? "";
   const designation = params.get("designation")?.trim() ?? "";
   const label = params.get("label")?.trim() ?? "";
-  if (body && designation && label) keys.push({ body, designation, label });
+  if (
+    body &&
+    designation &&
+    label &&
+    body.length <= MAX_BODY &&
+    designation.length <= MAX_DESIGNATION &&
+    label.length <= MAX_LABEL
+  ) {
+    keys.push({ body, designation, label });
+  }
   return keys;
 }
 
@@ -85,7 +102,10 @@ export default function OpenPage() {
   if (query.data) {
     return <Navigate to={readerPath(query.data.attachment_id, params)} replace />;
   }
-  if (query.isError) {
+  // The server says what it was sent isn't a key: the same answer as a
+  // link that carries none, rather than an error the reader can't act on.
+  const rejected = query.error instanceof ApiError && query.error.status === 422;
+  if (query.isError && !rejected) {
     return (
       <Notice title="Couldn't look the document up">
         <p className="text-sm text-red-600" role="alert">
@@ -94,7 +114,7 @@ export default function OpenPage() {
       </Notice>
     );
   }
-  if (keys.length === 0) {
+  if (keys.length === 0 || rejected) {
     return (
       <Notice title="Incomplete link">
         <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>

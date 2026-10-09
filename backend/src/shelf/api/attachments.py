@@ -25,7 +25,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Select, select
+from sqlalchemy import ColumnElement, Select, case, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -402,6 +402,15 @@ class AttachmentResolveResponse(BaseModel):
     attachments: list[AttachmentMatch]
 
 
+def _is_pdf_attachment() -> ColumnElement[bool]:
+    """SQL twin of `conversion.is_pdf`, loosened to "declared a PDF, or
+    named like one" — it only orders results, never decides access."""
+    return or_(
+        func.lower(Attachment.content_type).startswith("application/pdf"),
+        func.lower(Attachment.filename).endswith(".pdf"),
+    )
+
+
 # Registered before `/api/attachments/{attachment_id}`, which would
 # otherwise claim the path and reject "resolve" as a malformed UUID.
 @router.get(
@@ -471,7 +480,7 @@ async def resolve_attachments(
     )
     if sha256 is not None:
         stmt = stmt.where(Attachment.sha256 == sha256.lower()).order_by(
-            Attachment.created_at
+            Attachment.created_at, Attachment.id
         )
     else:
         assert body is not None and designation is not None and label is not None
@@ -486,7 +495,15 @@ async def resolve_attachments(
                 StandardFamily.designation == designation.strip(),
                 StandardRevision.label == label.strip(),
             )
-            .order_by(Item.created_at, Attachment.created_at)
+            # Oldest edition item first; within one, a PDF before the
+            # other files it carries (a cover letter, a source .docx),
+            # since a PDF is what the reader opens without converting.
+            .order_by(
+                Item.created_at,
+                case((_is_pdf_attachment(), 0), else_=1),
+                Attachment.created_at,
+                Attachment.id,
+            )
         )
 
     rows = (await db.execute(stmt)).all()

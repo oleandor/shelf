@@ -134,6 +134,34 @@ describe("OpenPage", () => {
     ).toBe(false);
   });
 
+  it("treats a key the server rejects as an incomplete link", async () => {
+    mockFetch({
+      "/api/me": { body: makeMe() },
+      "/api/attachments/resolve": {
+        status: 422,
+        body: { detail: "Give sha256, or all of body, designation and label" },
+      },
+    });
+    renderOpen(`/open?sha256=${SHA}`);
+
+    expect(
+      await screen.findByRole("heading", { name: "Incomplete link" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("reports any other failure as an error", async () => {
+    mockFetch({
+      "/api/me": { body: makeMe() },
+      "/api/attachments/resolve": { status: 500, body: {} },
+    });
+    renderOpen(`/open?sha256=${SHA}`);
+
+    expect(
+      await screen.findByRole("heading", { name: "Couldn't look the document up" }),
+    ).toBeInTheDocument();
+  });
+
   it("sends a signed-out visitor through login and back to the same link", async () => {
     mockFetch({ "/api/me": { status: 401, body: { detail: "Not authenticated" } } });
     renderOpen(`/open?sha256=${SHA}&page=57`);
@@ -155,6 +183,21 @@ describe("keysFromSearch", () => {
       { sha256: SHA },
       { body: "B", designation: "D", label: "L" },
     ]);
+  });
+
+  it("drops an edition field longer than the server accepts", () => {
+    const at = (body: number, designation: number, label: number) =>
+      keysFromSearch(
+        new URLSearchParams({
+          body: "b".repeat(body),
+          designation: "d".repeat(designation),
+          label: "l".repeat(label),
+        }),
+      ).length;
+    expect(at(120, 200, 120)).toBe(1);
+    expect(at(121, 200, 120)).toBe(0);
+    expect(at(120, 201, 120)).toBe(0);
+    expect(at(120, 200, 121)).toBe(0);
   });
 
   it("drops an edition missing a field", () => {
