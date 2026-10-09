@@ -92,7 +92,7 @@ class FrameAncestorsMiddleware:
         async def send_with_header(message: Message) -> None:
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
-                if headers.get("content-type", "").startswith("text/html"):
+                if headers.get("content-type", "").lower().startswith("text/html"):
                     headers.append("Content-Security-Policy", self.value)
             await send(message)
 

@@ -278,7 +278,8 @@ SHELF_FRAME_ANCESTORS="'none'"
 Entries are CSP source expressions — `'self'`, `'none'`, a scheme like
 `https:`, or a host source such as `https://*.example.com:8443` — space
 separated, or as a JSON list like `SHELF_CORS_ORIGINS`. `'self'` is not added
-for you. Anything that isn't a single source expression (a bare `self`, a `;`
+for you. `*` means any site, which is the same as leaving the setting unset.
+Anything that isn't a single source expression (a bare `self`, a `;`
 or `,`) stops the app at startup rather than shipping a policy that means
 something else. Only HTML gets the header: it governs the document being
 framed, and shelf's only document is the SPA's `index.html`.

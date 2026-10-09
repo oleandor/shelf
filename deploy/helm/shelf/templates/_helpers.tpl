@@ -53,7 +53,7 @@ env:
 {{- end }}
 {{- if .Values.frameAncestors }}
   - name: SHELF_FRAME_ANCESTORS
-    value: {{ .Values.frameAncestors | toJson | quote }}
+    value: {{ if kindIs "string" .Values.frameAncestors }}{{ .Values.frameAncestors | quote }}{{ else }}{{ .Values.frameAncestors | toJson | quote }}{{ end }}
 {{- end }}
 {{- with .Values.extraEnv }}
 {{- toYaml . | nindent 2 }}

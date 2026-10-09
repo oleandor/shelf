@@ -32,9 +32,14 @@ extraEnv: []
 # `Content-Security-Policy: frame-ancestors <list>`; empty (the default)
 # sends no framing header, so any page may frame shelf. `'self'` is not
 # implied. See DEVELOPERS.md, "Embedding".
+#
+# Either a list, one source per entry:
+#   frameAncestors:
+#     - "'self'"
+#     - https://viewer.example.com
+# or one string written as the CSP directive writes it:
+#   frameAncestors: "'self' https://viewer.example.com"
 frameAncestors: []
-#   - "'self'"
-#   - https://viewer.example.com
 
 ingress:
   enabled: false

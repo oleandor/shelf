@@ -1,8 +1,9 @@
 """`SHELF_FRAME_ANCESTORS`: a framing policy on HTML, or nothing at all.
 
-The app is built fresh per case with the SPA mounted from a temp dir, as
-in test_spa_fallback, since both the setting and the middleware are read
-at import time.
+The middleware is tested on a three-route Starlette app of its own. Only
+the wiring in `shelf.main` — installed when set, absent when not — needs
+the real app, which reads the setting at import time and so has to be
+re-imported, with the SPA mounted from a temp dir as in test_spa_fallback.
 """
 
 import importlib
@@ -13,8 +14,64 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.routing import Route
 
-from shelf.frame_ancestors import header_value
+from shelf.config import Settings
+from shelf.frame_ancestors import FrameAncestorsMiddleware, header_value
+
+POLICY = "frame-ancestors 'self' https://viewer.example.com"
+
+
+# ── The middleware ───────────────────────────────────────────────────────
+
+
+def _page(_: Request) -> Response:
+    return HTMLResponse("<!doctype html><title>Shelf</title>")
+
+
+def _shouting_page(_: Request) -> Response:
+    """Media types are case-insensitive; a proxy or framework that
+    capitalises one must not slip a page past the policy."""
+    return Response("<!doctype html>", headers={"Content-Type": "Text/HTML"})
+
+
+def _data(_: Request) -> Response:
+    return JSONResponse({"ok": True})
+
+
+@pytest.fixture
+def middleware_client() -> TestClient:
+    app = Starlette(
+        routes=[
+            Route("/page", _page),
+            Route("/shouting", _shouting_page),
+            Route("/data", _data),
+        ]
+    )
+    app.add_middleware(
+        FrameAncestorsMiddleware, sources=["'self'", "https://viewer.example.com"]
+    )
+    return TestClient(app)
+
+
+@pytest.mark.parametrize("path", ["/page", "/shouting"])
+def test_html_carries_the_policy(middleware_client: TestClient, path: str) -> None:
+    r = middleware_client.get(path)
+    assert r.status_code == 200
+    assert r.headers["content-security-policy"] == POLICY
+
+
+def test_other_responses_are_left_alone(middleware_client: TestClient) -> None:
+    """Only a document can be framed; the header means nothing elsewhere."""
+    r = middleware_client.get("/data")
+    assert r.status_code == 200
+    assert "content-security-policy" not in r.headers
+
+
+# ── The wiring in shelf.main ─────────────────────────────────────────────
 
 
 @pytest.fixture(autouse=True)
@@ -38,7 +95,6 @@ def _fresh_app(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, frame_ancestors: str | None
 ) -> TestClient:
     (tmp_path / "index.html").write_text("<!doctype html><title>Shelf</title>")
-    (tmp_path / "favicon.svg").write_text("<svg/>")
     monkeypatch.setenv("SHELF_FRONTEND_DIR", str(tmp_path))
     if frame_ancestors is None:
         monkeypatch.delenv("SHELF_FRAME_ANCESTORS", raising=False)
@@ -50,55 +106,48 @@ def _fresh_app(
     return TestClient(main.app)
 
 
-@pytest.mark.parametrize("path", ["/", "/library", "/reader/abc?page=3"])
-def test_html_carries_the_policy_when_set(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
-) -> None:
-    client = _fresh_app(
-        tmp_path, monkeypatch, "'self' https://viewer.example.com"
-    )
-    r = client.get(path)
-    assert r.status_code == 200
-    assert r.headers["content-security-policy"] == (
-        "frame-ancestors 'self' https://viewer.example.com"
-    )
-
-
-def test_a_json_list_works_too(
+def test_the_app_sends_the_policy_on_its_pages_when_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    client = _fresh_app(
-        tmp_path, monkeypatch, '["\'self\'", "https://viewer.example.com"]'
+    client = _fresh_app(tmp_path, monkeypatch, "'self' https://viewer.example.com")
+    assert client.get("/reader/abc?page=3").headers["content-security-policy"] == (
+        POLICY
     )
-    assert client.get("/").headers["content-security-policy"] == (
-        "frame-ancestors 'self' https://viewer.example.com"
-    )
+    assert "content-security-policy" not in client.get("/api").headers
 
 
-@pytest.mark.parametrize("path", ["/api", "/health", "/favicon.svg"])
-def test_non_html_responses_are_left_alone(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
-) -> None:
-    """Only a document can be framed; the header means nothing elsewhere."""
-    client = _fresh_app(tmp_path, monkeypatch, "'self'")
-    r = client.get(path)
-    assert r.status_code == 200
-    assert "content-security-policy" not in r.headers
-
-
-@pytest.mark.parametrize("value", [None, "", "  "])
-def test_unset_sends_no_header(
+@pytest.mark.parametrize("value", [None, ""])
+def test_unset_the_app_sends_no_framing_header(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str | None
 ) -> None:
-    """Unset is today's behaviour: no framing header of any kind."""
-    client = _fresh_app(tmp_path, monkeypatch, value)
-    r = client.get("/")
+    """Unset is the behaviour from before the setting existed."""
+    r = _fresh_app(tmp_path, monkeypatch, value).get("/")
     assert r.status_code == 200
     assert "content-security-policy" not in r.headers
     assert "x-frame-options" not in r.headers
 
 
-# ── Validation ───────────────────────────────────────────────────────────
+# ── Parsing and validation ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "'self' https://viewer.example.com",
+        '["\'self\'", "https://viewer.example.com"]',
+    ],
+    ids=["csp-string", "json-list"],
+)
+def test_both_spellings_parse_to_the_same_list(raw: str) -> None:
+    assert Settings(frame_ancestors=raw).frame_ancestors == [
+        "'self'",
+        "https://viewer.example.com",
+    ]
+
+
+@pytest.mark.parametrize("raw", ["", "  "])
+def test_blank_is_unset(raw: str) -> None:
+    assert Settings(frame_ancestors=raw).frame_ancestors == []
 
 
 @pytest.mark.parametrize(
@@ -106,6 +155,7 @@ def test_unset_sends_no_header(
     [
         "'self'",
         "'none'",
+        "*",
         "https:",
         "https://viewer.example.com",
         "https://*.example.com:8443",
@@ -115,8 +165,6 @@ def test_unset_sends_no_header(
     ],
 )
 def test_source_expressions_are_accepted(value: str) -> None:
-    from shelf.config import Settings
-
     s = Settings(frame_ancestors=value)
     assert header_value(s.frame_ancestors) == f"frame-ancestors {value}"
 
@@ -135,7 +183,5 @@ def test_source_expressions_are_accepted(value: str) -> None:
     ],
 )
 def test_anything_else_fails_at_startup(value: str | list[str]) -> None:
-    from shelf.config import Settings
-
     with pytest.raises(ValidationError):
         Settings(frame_ancestors=value)
