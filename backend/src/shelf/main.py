@@ -36,6 +36,7 @@ from .api import (
     worker_api,
 )
 from .config import settings
+from .frame_ancestors import FrameAncestorsMiddleware
 from .preflight import PreflightError, run_readiness_checks, run_startup_checks
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Only when configured: unset, no framing header is sent and responses are
+# exactly as before. See frame_ancestors.py.
+if settings.frame_ancestors:
+    app.add_middleware(FrameAncestorsMiddleware, sources=settings.frame_ancestors)
 
 app.include_router(auth.router)
 app.include_router(me.router)

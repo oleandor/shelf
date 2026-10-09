@@ -41,7 +41,7 @@ envFrom:
   - secretRef:
       name: {{ .Values.existingSecretName }}
 {{- end }}
-{{- if or .Values.nats.url .Values.gotenberg.enabled .Values.extraEnv }}
+{{- if or .Values.nats.url .Values.gotenberg.enabled .Values.frameAncestors .Values.extraEnv }}
 env:
 {{- if .Values.nats.url }}
   - name: SHELF_NATS_URL
@@ -50,6 +50,10 @@ env:
 {{- if .Values.gotenberg.enabled }}
   - name: SHELF_GOTENBERG_URL
     value: "http://{{ include "shelf.fullname" . }}-gotenberg:3000"
+{{- end }}
+{{- if .Values.frameAncestors }}
+  - name: SHELF_FRAME_ANCESTORS
+    value: {{ .Values.frameAncestors | toJson | quote }}
 {{- end }}
 {{- with .Values.extraEnv }}
 {{- toYaml . | nindent 2 }}

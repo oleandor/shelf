@@ -1,5 +1,9 @@
-from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Annotated
+
+from pydantic import BaseModel, Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from .frame_ancestors import parse_sources, validate_sources
 
 
 class OIDCProvider(BaseModel):
@@ -63,6 +67,25 @@ class Settings(BaseSettings):
     gotenberg_url: str = "http://localhost:3000"
 
     cors_origins: list[str] = ["http://localhost:5173"]
+
+    # Pages allowed to embed shelf in a frame, as CSP source expressions:
+    #   SHELF_FRAME_ANCESTORS="'self' https://viewer.example.com"
+    # (a JSON list works too, as for SHELF_CORS_ORIGINS). Set, every HTML
+    # response carries `Content-Security-Policy: frame-ancestors <list>`
+    # and browsers refuse to render shelf inside any other page. Unset —
+    # the default — sends no framing header, so any page may frame shelf,
+    # as it always could. `'self'` is not implied. See frame_ancestors.py.
+    frame_ancestors: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    @field_validator("frame_ancestors", mode="before")
+    @classmethod
+    def _parse_frame_ancestors(cls, raw: object) -> object:
+        return parse_sources(raw)
+
+    @field_validator("frame_ancestors")
+    @classmethod
+    def _check_frame_ancestors(cls, sources: list[str]) -> list[str]:
+        return validate_sources(sources)
 
     session_secret_key: str = "dev-secret-do-not-use-in-production"
     session_ttl_seconds: int = 24 * 3600

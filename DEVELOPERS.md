@@ -214,6 +214,11 @@ SHELF_S3_SECRET_ACCESS_KEY=
 SHELF_GOTENBERG_URL=http://localhost:3000
 SHELF_CORS_ORIGINS=["http://localhost:5173"]
 
+# Pages allowed to embed shelf in an iframe, as CSP source expressions. Set,
+# HTML responses carry `Content-Security-Policy: frame-ancestors <list>`.
+# Unset (the default) sends no framing header. See "Embedding" below.
+SHELF_FRAME_ANCESTORS="'self' https://viewer.example.com"
+
 SHELF_SESSION_SECRET_KEY=<openssl rand -hex 32>
 SHELF_SESSION_COOKIE_SECURE=true
 SHELF_DEV_LOGIN_ENABLED=false
@@ -255,6 +260,35 @@ become a crash loop. Configuration faults are not retried.
 an outage takes an instance out of rotation rather than restarting it.
 
 Set `SHELF_PREFLIGHT_ENABLED=false` to start without them.
+
+### Embedding
+
+Shelf sends no framing header unless told to, so by default any page can
+show it in an iframe. `SHELF_FRAME_ANCESTORS` makes that a decision: set, every
+HTML response carries `Content-Security-Policy: frame-ancestors <list>`, and a
+browser refuses to render shelf inside any page the list doesn't name.
+
+```
+# Shelf itself and one viewer may frame it; nothing else may.
+SHELF_FRAME_ANCESTORS="'self' https://viewer.example.com"
+# Nobody may.
+SHELF_FRAME_ANCESTORS="'none'"
+```
+
+Entries are CSP source expressions — `'self'`, `'none'`, a scheme like
+`https:`, or a host source such as `https://*.example.com:8443` — space
+separated, or as a JSON list like `SHELF_CORS_ORIGINS`. `'self'` is not added
+for you. Anything that isn't a single source expression (a bare `self`, a `;`
+or `,`) stops the app at startup rather than shipping a policy that means
+something else. Only HTML gets the header: it governs the document being
+framed, and shelf's only document is the SPA's `index.html`.
+
+A frame is cross-site whenever the embedding page's registrable domain
+differs from shelf's, and then the browser withholds shelf's `SameSite=Lax`
+session cookie: the frame shows the sign-in page, and signing in inside a
+frame doesn't work with providers that forbid being framed themselves. The
+setting decides who may frame shelf, not whether a session reaches the frame.
+In the Helm chart the same list is `frameAncestors`.
 
 ## OIDC / SSO
 

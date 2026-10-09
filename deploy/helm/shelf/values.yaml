@@ -19,13 +19,22 @@ replicaCount: 1
 #   SHELF_S3_REGION, SHELF_S3_BUCKET,
 #   SHELF_S3_ACCESS_KEY_ID, SHELF_S3_SECRET_ACCESS_KEY,
 #   SHELF_GOTENBERG_URL, SHELF_DEV_LOGIN_ENABLED, SHELF_CORS_ORIGINS,
-#   SHELF_PREFLIGHT_ENABLED
+#   SHELF_PREFLIGHT_ENABLED, SHELF_FRAME_ANCESTORS
 existingSecretName: ""
 
 # -- Extra environment variables, appended after envFrom (these win on conflict).
 extraEnv: []
 #   - name: SHELF_CORS_ORIGINS
 #     value: '["https://shelf.example.com"]'
+
+# -- Pages allowed to embed shelf in an iframe, as CSP source expressions,
+# passed to the app as SHELF_FRAME_ANCESTORS. Set, HTML responses carry
+# `Content-Security-Policy: frame-ancestors <list>`; empty (the default)
+# sends no framing header, so any page may frame shelf. `'self'` is not
+# implied. See DEVELOPERS.md, "Embedding".
+frameAncestors: []
+#   - "'self'"
+#   - https://viewer.example.com
 
 ingress:
   enabled: false
