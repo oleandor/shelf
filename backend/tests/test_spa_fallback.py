@@ -56,6 +56,8 @@ def test_spa_passes_through_static_file(app_with_spa: object) -> None:
         # the fallback must serve it rather than 404 on the whole URL.
         "/reader/00000000-0000-0000-0000-000000000000"
         "?annotation=11111111-1111-1111-1111-111111111111",
+        # A document opened by file hash rather than id.
+        f"/open?sha256={'ab' * 32}&page=57&find=Table%207-1",
     ],
 )
 def test_spa_falls_back_to_index_for_client_routes(

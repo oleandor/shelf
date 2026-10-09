@@ -77,6 +77,36 @@ export function getAttachment(id: string): Promise<Attachment> {
   return apiFetch<Attachment>(`/api/attachments/${encodeURIComponent(id)}`);
 }
 
+export interface AttachmentMatch {
+  attachment_id: string;
+  filename: string;
+  item_id: string;
+  space_id: string;
+}
+
+/**
+ * A portable key for a document: its file's SHA-256, or the edition of a
+ * standard it is (`body` + `designation` + `label`). Neither depends on
+ * this instance's ids, which is what lets a link be built without one.
+ */
+export type AttachmentKey =
+  | { sha256: string }
+  | { body: string; designation: string; label: string };
+
+/**
+ * The caller's attachments matching `key`, oldest first; empty when the
+ * file is not in any space they can read.
+ */
+export async function resolveAttachments(
+  key: AttachmentKey,
+): Promise<AttachmentMatch[]> {
+  const qs = new URLSearchParams(key).toString();
+  const r = await apiFetch<{ attachments: AttachmentMatch[] }>(
+    `/api/attachments/resolve?${qs}`,
+  );
+  return r.attachments;
+}
+
 export function listAttachments(itemId: string): Promise<Attachment[]> {
   return apiFetch<Attachment[]>(
     `/api/items/${encodeURIComponent(itemId)}/attachments`,

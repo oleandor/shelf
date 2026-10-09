@@ -4,6 +4,7 @@ import LoginPage from "@/pages/LoginPage";
 import HomePage from "@/pages/HomePage";
 import LibraryPage from "@/pages/LibraryPage";
 import SettingsPage from "@/pages/SettingsPage";
+import OpenPage from "@/pages/OpenPage";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { PREF_SHOW_LANDING, usePref } from "@/auth/prefs";
 import { useThemeSync } from "@/auth/theme";
@@ -72,6 +73,17 @@ export default function App() {
             <Suspense fallback={null}>
               <ReaderPage />
             </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      {/* A document by its file hash (or standard edition) rather than by
+          this instance's id — resolves, then replaces itself with the
+          reader. See OpenPage. */}
+      <Route
+        path="/open"
+        element={
+          <ProtectedRoute>
+            <OpenPage />
           </ProtectedRoute>
         }
       />

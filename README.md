@@ -132,6 +132,29 @@ resolves to the same passage for everyone who can open the space. Get one from
 
 ![The reader opened from a highlight link: the passage ringed on page 2, the highlights panel alongside](docs/screenshots/reader.png)
 
+#### Linking by file, not by id
+
+`/reader/<id>` names this instance's id for an attachment, which nothing
+outside the library knows. `/open` names the document instead, so a link can
+be built by anything that holds the PDF, and works on every shelf instance
+that has the file:
+
+```
+https://shelf.example.com/open?sha256=<hex digest of the file>&page=57&find=Table%203.1
+```
+
+It looks the file up among the spaces you can read and replaces itself with
+the reader, passing `page` and `find` along. A standard can be named by its
+edition as well — `&body=…&designation=…&label=…`, matched the way filing a
+revision matches — which is tried when the hash finds nothing, since two
+downloads of one standard rarely hash the same. When neither matches, the page
+says the document isn't in your library; a signed-out visitor signs in first
+and comes back to the same link.
+
+The hash is the one of the file as uploaded, recorded when the upload goes
+through the API or when the worker first extracts its text, so a file is
+findable this way once its text has been extracted.
+
 ### Document details while reading
 
 The **ⓘ** button at the top right of the reader opens the document's details

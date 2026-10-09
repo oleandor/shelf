@@ -25,12 +25,17 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth.deps import get_current_user
-from ..auth.spaces import SPACE_ROLE_EDITOR, SPACE_ROLE_VIEWER, require_space_role
+from ..auth.spaces import (
+    SPACE_ROLE_EDITOR,
+    SPACE_ROLE_VIEWER,
+    readable_item_space_ids,
+    require_space_role,
+)
 from ..db import get_session
 from ..models import (
     Attachment,
@@ -39,6 +44,8 @@ from ..models import (
     AttachmentProcessing,
     Item,
     Space,
+    StandardFamily,
+    StandardRevision,
     User,
 )
 from ..services import conversion, extraction, storage
@@ -379,6 +386,120 @@ async def current_versions(
         if a.id in best
         else (a.storage_key, "original")
         for a in attachments
+    }
+
+
+class AttachmentMatch(BaseModel):
+    attachment_id: uuid.UUID
+    filename: str
+    item_id: uuid.UUID
+    space_id: uuid.UUID
+
+
+class AttachmentResolveResponse(BaseModel):
+    """Possibly empty: a file the caller can't see is not an error."""
+
+    attachments: list[AttachmentMatch]
+
+
+# Registered before `/api/attachments/{attachment_id}`, which would
+# otherwise claim the path and reject "resolve" as a malformed UUID.
+@router.get(
+    "/api/attachments/resolve",
+    response_model=AttachmentResolveResponse,
+    summary="Find the caller's attachments by file hash or standard edition",
+)
+async def resolve_attachments(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_session)],
+    sha256: Annotated[str | None, Query(pattern=r"^[0-9a-fA-F]{64}$")] = None,
+    body: Annotated[str | None, Query(max_length=120)] = None,
+    designation: Annotated[str | None, Query(max_length=200)] = None,
+    label: Annotated[str | None, Query(max_length=120)] = None,
+    space: Annotated[str | None, Query()] = None,
+) -> dict[str, object]:
+    """The session twin of `/api/v1/attachments/resolve`, for the SPA.
+
+    It is what makes `/open?sha256=…` work as a link. Item and
+    attachment ids differ per instance, so something that holds a PDF
+    but knows nothing about this library can still point a reader at
+    it: the bytes hash the same everywhere. A standard edition — `body`
+    + `designation` + `label` — is the other portable key, for when the
+    library's copy is a different download of the same document
+    (publishers watermark per copy, which changes the hash).
+
+    One key per request: `sha256`, or all three edition fields. Scoped
+    to the spaces whose items the caller can read — the same set the
+    item routes allow — so this answers "can *I* open this file", never
+    "does anyone have it". An upload that never completed is left out:
+    there is nothing to read yet.
+    """
+    edition = (body, designation, label)
+    has_edition = any(v is not None for v in edition)
+    if sha256 is not None and has_edition:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "Give sha256 or body + designation + label, not both",
+        )
+    if sha256 is None and not all(v and v.strip() for v in edition):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "Give sha256, or all of body, designation and label",
+        )
+
+    reachable: Select[tuple[uuid.UUID]] | list[uuid.UUID] = readable_item_space_ids(
+        user.id
+    )
+    if space is not None:
+        target = (
+            await db.execute(
+                select(Space.id).where(Space.slug == space, Space.id.in_(reachable))
+            )
+        ).scalar_one_or_none()
+        if target is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Space not found")
+        reachable = [target]
+
+    stmt = (
+        select(Attachment.id, Attachment.filename, Item.id, Item.space_id)
+        .join(Item, Item.id == Attachment.item_id)
+        .where(
+            Item.deleted_at.is_(None),
+            Item.space_id.in_(reachable),
+            Attachment.uploaded_at.is_not(None),
+        )
+    )
+    if sha256 is not None:
+        stmt = stmt.where(Attachment.sha256 == sha256.lower()).order_by(
+            Attachment.created_at
+        )
+    else:
+        assert body is not None and designation is not None and label is not None
+        stmt = (
+            stmt.join(StandardRevision, StandardRevision.item_id == Item.id)
+            .join(StandardFamily, StandardFamily.id == StandardRevision.family_id)
+            .where(
+                # Body and designation are CITEXT, so this is the same
+                # case-insensitive match filing a revision uses; the
+                # label is matched as written.
+                StandardFamily.body == body.strip(),
+                StandardFamily.designation == designation.strip(),
+                StandardRevision.label == label.strip(),
+            )
+            .order_by(Item.created_at, Attachment.created_at)
+        )
+
+    rows = (await db.execute(stmt)).all()
+    return {
+        "attachments": [
+            {
+                "attachment_id": att_id,
+                "filename": filename,
+                "item_id": item_id,
+                "space_id": space_id,
+            }
+            for att_id, filename, item_id, space_id in rows
+        ]
     }
 
 
